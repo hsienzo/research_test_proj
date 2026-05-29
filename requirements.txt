@@ -1,0 +1,48 @@
+# Python dependencies for LIFE (Prompt-Induced Linguistic Fingerprints
+# for LLM-Generated Fake News Detection)
+#
+# Versions are left unpinned because the original research code does not
+# specify them. If you hit incompatibilities, the notes below point to the
+# constraints we know about. Install with:
+#     pip install -r requirements.txt
+#
+# NOTE: PyTorch with CUDA should usually be installed separately following
+# the official selector at https://pytorch.org/get-started/locally/ so that
+# the build matches your CUDA version. The bare "torch" line below installs
+# the default (often CPU-only) build.
+
+# --- Core deep learning ---
+torch
+# transformers must be old enough to still expose AdamW from
+# transformers.optimization (used in LIFE_train/train.py). transformers>=4.x
+# removed it in later releases; if AdamW import fails, either pin an older
+# transformers (e.g. transformers<4.40) or switch to torch.optim.AdamW.
+transformers
+datasets
+accelerate          # required for device_map="auto" in backend_model.py
+bitsandbytes        # required for load_in_8bit=True (CUDA GPU only)
+sentencepiece       # required for the Llama tokenizer
+protobuf            # commonly required by sentencepiece / Llama tokenizers
+
+# --- Sequence labelling model (CRF layer) ---
+fastNLP             # provides ConditionalRandomField / allowed_transitions
+
+# --- Inference server (backend_api.py) ---
+mosec               # serves the per-token log-likelihood models
+msgpack             # request/response serialization between client and server
+httpx               # HTTP client used by dataset/3_gen_features.py
+
+# --- Classic ML / data ---
+scikit-learn        # train_test_split, metrics, normalize
+numpy
+scipy
+pandas
+
+# --- NLP utilities ---
+nltk                # sentence tokenization (needs the 'punkt' data, see README)
+
+# --- OpenAI API (only used by the TikTokenizerPPLCalc path in backend_utils.py) ---
+openai
+
+# --- Misc ---
+tqdm                # progress bars
