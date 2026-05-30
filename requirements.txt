@@ -25,7 +25,10 @@ sentencepiece       # required for the Llama tokenizer
 protobuf            # commonly required by sentencepiece / Llama tokenizers
 
 # --- Sequence labelling model (CRF layer) ---
-fastNLP             # provides ConditionalRandomField / allowed_transitions
+# Pinned to 1.0.x because train-time code imports from `fastNLP.modules.torch`
+# (the 1.x API). Older 0.x releases lay the package out differently and the
+# import fails. If 1.0.1 won't resolve on your platform, try another 1.0.x.
+fastNLP==1.0.1      # provides ConditionalRandomField / allowed_transitions
 
 # --- Inference server (backend_api.py) ---
 mosec               # serves the per-token log-likelihood models

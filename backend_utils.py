@@ -405,7 +405,10 @@ class SPLlamaTokenizerPPLCalc(object):
             start = end
         return ll_tokens
 
-    def forward_calc_ppl(self, text, sentence=None):
+    def forward_calc_ppl(self, text, sentences=None):
+        prompt = getPrompt(text)
+        text = prompt + text
+
         tokenized = self.base_tokenizer(text,
                                         max_length=1024,
                                         truncation=True,
@@ -425,14 +428,14 @@ class SPLlamaTokenizerPPLCalc(object):
         # ll_tokens has removed `<s>_`, the first element is the logit of the first word
         begin_word_idx = 0
 
-        if sentence is not None:
-            start_word, end_word = find_sentence_word_indices(text, sentence)
-            sentence_ll = ll_tokens[start_word:end_word + 1]
-
+        if sentences is not None:
             prompt_start, prompt_end = find_sentence_word_indices(text, prompt)
             promtp_ll = ll_tokens[prompt_start:prompt_end + 1]
-
-            combined_ll = promtp_ll + sentence_ll
+            combined_ll = promtp_ll
+            for sentence in sentences:
+                start_word, end_word = find_sentence_word_indices(text, sentence)
+                sentence_ll = ll_tokens[start_word:end_word + 1]
+                combined_ll += sentence_ll
 
             return [loss, begin_word_idx, ll_tokens, combined_ll]
         else:
