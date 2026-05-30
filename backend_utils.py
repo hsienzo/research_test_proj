@@ -373,7 +373,9 @@ class SPLlamaTokenizerPPLCalc(object):
         tokenized_tokens = self.base_tokenizer.convert_ids_to_tokens(input_ids)
         bbs_ll = []
         for idx, token in enumerate(tokenized_tokens):
-            if self.base_tokenizer.sp_model.IsByte(input_ids[idx].item()):
+            # Byte-fallback tokens look like '<0x0A>'. Detect via byte_decoder instead of
+            # sp_model.IsByte, which newer transformers tokenizer backends don't expose.
+            if token in self.byte_decoder:
                 byte_list = [token]
             else:
                 byte_list = [
