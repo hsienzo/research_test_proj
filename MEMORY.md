@@ -1,6 +1,6 @@
 # Project Memory — LIFE on Google Colab
 
-Hand-off summary so a new session can pick up with full context. Last updated: 2026-05-29.
+Hand-off summary so a new session can pick up with full context. Last updated: 2026-06-08.
 
 ---
 
@@ -193,6 +193,39 @@ User chose full faithful reproduction. Applied edits:
 - **Other knobs:** prompt template (getPrompt vs paper T1-T3, ~1% swing), top-k, BERT-extractor
   training, seeds.
 - **Scale out:** GossipCop++ (k=15) for a larger/lower-variance comparison.
+
+## 7d. Combined fake/real run — HF+MF vs HR+MR (edits applied + statically verified, Colab run pending)
+
+New experiment requested 2026-06-08: instead of the paper's LLM pair only, pool ALL four
+PolitiFact++ files by veracity — **fake = HF + MF (194)**, **real = HR + MR (326)**, total
+**520**. This deliberately **extends** the paper's protocol (paper detects MF-vs-MR only;
+HF/HR are sources), so numbers won't be directly comparable to the paper's 0.900/0.882 —
+compare instead to the MF-vs-MR run (85.5 / 80.8, §7c).
+
+**Key gotcha (found + fixed):** HF/MF share all 97 source ids and HR/MR share 129 (MF/MR are
+machine rewrites of the same stories; MR also has 3 in-file dup ids). Step 2 joins key
+sentences on `(id, label)`, so collapsing labels to fake/real with the original ids would
+collide ~226 records → wrong key sentences. Fix: the converter emits synthetic globally
+unique ids (`HF_0`, `MF_0`, …) for the combined scheme. Verified: 194 fake / 326 real / 520,
+all 520 ids unique.
+
+**Edits (retarget in place — replaced the MF-vs-MR config; user chose no flag/switch):**
+- `dataset/0_convert.py` — added `--subset combined` (all 4 files; label `fake`/`real` from
+  the `_fake`/`_true` output name; synthetic `f"{src_name[:2]}_{i}"` ids). `all`/`llm` left
+  untouched.
+- `dataset/3_gen_features_local.py` — `EN_LABELS` gained `'fake':12, 'real':13` (`label_int`
+  is cosmetic; `dataloader.py` keys off the `label` string).
+- `LIFE_train/train.py` — `en_labels` → `{'fake':0,'real':1}` (8 BMES tags; record labels
+  now match).
+- `LIFE_colab.ipynb` — retargeted to new `*_combined` dirs + a NEW `bert_combined.pt` so
+  Step 1 trains a FRESH extractor (load-or-train keys on file existence); Step 0 `--subset
+  combined`; markdown/counts updated. **k stayed 10** (briefly tried 15, reverted). Step 3
+  still LLaMA2-7B (NousResearch mirror, bf16); Step 4 still 50 epochs. The old MF-vs-MR
+  artifacts on Drive are preserved (different paths).
+
+**Static checks (local, stdlib only — no ML libs):** all 3 `.py` compile; notebook valid
+JSON; converter run confirms the counts/labels/unique-ids above. **Pending:** run the
+notebook on Colab and record the combined Acc / Macro-F1 here.
 
 ## 8b. Paper findings (read 2026-05-29 via locally-installed pypdf → paper_extracted.txt)
 
