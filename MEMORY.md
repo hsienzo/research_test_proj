@@ -302,6 +302,32 @@ Built (verified locally: py_compile OK, notebook valid JSON = 33 cells):
 `features_llama` has only MF/MR). Sync to Drive: `LIFE_train/train_multi.py` + updated
 `LIFE_colab.ipynb`. **RESULT: <fill in after the Colab run>** (compare vs gpt2 4-class 51.7%).
 
+## 7g. Combined-by-veracity binary exploration (fake=HF+MF, real=HR+MR) — built, run pending [2026-06-17]
+
+User asked to re-run the combined setup as a clean side experiment on copies: pool the human
+dataset in, binary fake/real by veracity (fake = HF+MF, real = HR+MR). NOTE: this was tried
+once before (§7d) → **Acc 85.2 / Macro-F1 78.4** (fake P/R 69.8/63.2, real 89.3/91.8), then
+reverted because it departs from the paper (human fakes lack the LLM fingerprint LIFE keys on).
+Now kept permanently as a copy-based side experiment.
+
+Built (verified locally: py_compile OK, notebook valid JSON = 35 cells):
+- `LIFE_train/train_combined.py` (NEW, copy of `train.py`): adds `DataManagerCombined(DataManager)`
+  which coarsens each article's fine label to `'fake'`/`'true'` by the `_fake`/`_true` suffix
+  in `initialize_dataset` (the coarse label then flows through `data_collator` unchanged);
+  `en_labels = {'fake':0, 'true':1}` (8 BMES tags); ckpt names suffixed `_combined`; class-order
+  print. No seeding. `model.py`/`dataloader.py` imported unchanged.
+- `LIFE_colab.ipynb`: added **Step 4c** (before Notes). **Reuses `FEATURES_MULTI`** + the same
+  `TRAIN_PATH_MULTI`/`TEST_PATH_MULTI` split as the 4-class run — features are label-agnostic,
+  so no extra Step 0–3 pass beyond the 4-class one (run Steps 0m–3m first). `--split_dataset`
+  regenerates the identical seed-0 split, so 4m (4-class) and 4c (combined) are comparable.
+
+Key insight: the binary MF-vs-MR run, the 4-class run, and this combined run that all use the
+same articles share LLaMA features — the malicious-prompt reconstruction LL is computed
+independent of the label. So 4-class and combined both consume `FEATURES_MULTI`.
+
+Sync to Drive: `LIFE_train/train_combined.py` + updated `LIFE_colab.ipynb`.
+**RESULT: <fill in after the Colab run>** (prior combined run: 85.2 / 78.4).
+
 ## 8b. Paper findings (read 2026-05-29 via locally-installed pypdf → paper_extracted.txt)
 
 LIFE = WWW '26 (Chi Wang et al.). Key facts that contradict our current setup:
