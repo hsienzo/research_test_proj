@@ -203,6 +203,105 @@ HF/HR are human sources — see §8b), and the human-written fakes (HF) lack the
 LIFE keys on, which drags fake recall down. **Reverted to the MF-vs-MR config** (85.5/80.8)
 as the paper-faithful setup; all combined-run edits to the `.py` files and notebook undone.
 
+## 7e. RESUME HERE — closing the gap to the paper (classifier head) [2026-06-08 EOD]
+
+**State:** back on the paper-faithful **MF-vs-MR** setup (revert verified: `py_compile` OK,
+notebook valid JSON, no `combined`/`fake`/`real` remnants). A single fresh run gave **Acc 83.9
+/ Macro-F1 78.2** (per-class P/R: fake 73.1/62.0, real 87.0/91.8) — within run-to-run variance
+of the earlier 85.5/80.8 (see "why it wobbles"). `features_llama` confirmed clean: **229**
+records, `{gpt3.5_fake:97, gpt3.5_true:132}` (not stale combined data).
+
+**Goal:** close the gap to the paper's PolitiFact++ **0.900 / 0.882**.
+
+**Root-cause finding (confirmed against the paper):** the released classifier head diverges
+from the paper.
+- Paper §3.4, **Eq 11**: `y_hat = sigmoid(W · Transformer(CNN(P)) + b)` — ONE probability per
+  **article**, trained with **binary cross-entropy** (Eq 12). Direct, article-level.
+- Released `LIFE_train/model.py` (`ModelWiseTransformerClassifier`): per-**token** logits over
+  **8 BMES tags** (B/M/E/S × gpt3.5_fake/gpt3.5_true) + token-level `CrossEntropyLoss`; CRF
+  only at decode (`viterbi_decode`); then `train.py:get_text_label` aggregates
+  token→sentence→article by **majority vote**. The article label is never directly optimized.
+- The **trunk (CNN→Transformer) already matches Eq 11** — only the HEAD diverges. Fix is
+  localized to: output projection + loss + label encoding + eval.
+
+**Proposed change (3 files):**
+- `LIFE_train/model.py` — new `ModelWiseBCEClassifier`: reuse the conv+transformer trunk →
+  masked **mean-pool** over valid tokens → `Linear(64, 1)` → `BCEWithLogitsLoss` vs a single
+  0/1 article label; predict = `sigmoid > 0.5`. (Mean-pool is the implied seq→scalar step.)
+- `LIFE_train/dataloader.py` — a BCE label path: emit one binary label per article
+  (fake=1/real=0, i.e. label endswith 'fake') + keep the raw token mask (already built in
+  `process_and_convert_to_tensor`) for pooling, instead of the BMES id masks.
+- `LIFE_train/train.py` — select via `--model BCE` (keep CRF/BMES head for A/B); BCE loss
+  path; simple article-level eval (compare preds vs labels, no `get_text_label`). Add `--seed`
+  and seed everything (BERT extractor + training) so runs reproduce.
+
+**DECISION TAKEN (2026-06-11): built the BCE head + seeding, A/B vs the released head.**
+User constraint: don't edit originals — edit on copies. So the B-side is NEW files; the
+untouched originals are the A-side:
+- `LIFE_train/model_bce.py` (NEW) — `ModelWiseBCEClassifier`: trunk copied unchanged from
+  `ModelWiseTransformerClassifier`, head = masked mean-pool → `Linear(64,1)` →
+  `BCEWithLogitsLoss` (fake=1/real=0), preds = sigmoid>0.5. (Eq 11 doesn't specify the
+  seq→vector reduction; mean-pool is our reading.) Imports `ConvFeatureExtractionModel`
+  from model.py.
+- `LIFE_train/train_bce.py` (NEW, edited copy of train.py) — `DataManagerBCE(DataManager)`
+  overriding only `data_collator` (binary labels via `label.endswith('_fake')`, reuses
+  `process_and_convert_to_tensor` for masks); `BCETrainer` with same optimizer/hyperparams;
+  direct article-level eval printing "(real=0, fake=1)"; `split_dataset` copied verbatim
+  (hard seed-0 → identical split to A-side); `--seed` flag with `set_seed_all` called
+  **AFTER** DataManager init (its `__init__` re-seeds to 0 — dataloader.py:26 pitfall), so
+  data is fixed and seed controls model init + batch order. Ckpt `bce_en.pt`.
+- `LIFE_colab.ipynb` — Step 4 split into **4A** (released head, cell unchanged) and **4B**
+  (train_bce.py, `--seed 0`, note to re-run seeds 1-4 for mean±std). Backup of the
+  pre-edit notebook saved as `LIFE_colab_backup.ipynb`.
+- `model.py`/`dataloader.py`/`train.py` confirmed untouched via git diff.
+- Verified locally: both new files py_compile, notebook valid JSON (21 cells).
+
+**✅ 4B RESULTS (Colab): head hypothesis CONFIRMED.** Multi-seed headline (seeds 0–20):
+**Acc 86.82 ± 2.157, Macro-F1 84.48 ± 2.986** (mean ± std, 4 s.f.). Best single seed
+(seed 2): Acc 89.1 / Macro-F1 87.4 (real P/R 85.3/100.0, fake P/R 100.0/70.6 — test is
+17 fake/29 real; all errors are missed fakes). The mean clears the released CRF/BMES
+A-side (~84–85.5 on the SAME features + split), confirming the head gain honestly, but is
+~3.2 / ~3.7 pts below the paper's 90.0 / 88.2 — the cherry-picked peak alone overstated it.
+
+**Why it wobbles (no fixed seed anywhere):** (1) Step-1 BERT extractor retrains
+nondeterministically (HF `Trainer`, 3 ep); (2) Step-3 LLaMA features are bfloat16 on GPU (not
+bit-reproducible); (3) ~46-sample test → each article ≈ 2 acc pts. So 83.9 vs 85.5 ≈ 1 article
+= noise. Seeding is needed to measure any head gain honestly.
+
+**Other levers (lower priority):** prompt template (`backend_utils.getPrompt` vs paper T1-T3,
+~1% per §8b); BERT-extractor quality on ~183 train articles; top-k.
+
+## 7f. 4-class multiclass exploration (HF/HR/MF/MR) — built, run pending [2026-06-17]
+
+User asked to see a **4-class** multiclass result (human_fake / human_true / gpt3.5_fake /
+gpt3.5_true) using the **original A-side files** (released CRF/BMES head), edited on copies —
+NOT the BCE files. Exploratory ("see what it looks like"), not paper reproduction (the paper
+is binary MF-vs-MR, §8b). Distinct from the earlier 4-class attempt because that used **gpt2**
+features and scored **51.7%** (§7c); this uses the realigned **LLaMA2-7B** features.
+
+Key simplification: `model.py`/`dataloader.py` are already class-count-agnostic
+(`label_num = len(id2labels)`; CRF `allowed_transitions(id2labels)`; dataloader builds
+`B-/M-/E-/S-+label` for any label string). So only `train.py` needed copying.
+
+Built (verified locally: py_compile OK, notebook valid JSON = 33 cells):
+- `LIFE_train/train_multi.py` (NEW, copy of `train.py`): only diffs are `en_labels` → the 4
+  classes `{human_fake:0, human_true:1, gpt3.5_fake:2, gpt3.5_true:3}` (16 BMES tags), ckpt
+  names suffixed `_multi` (e.g. `linear_multi_en.pt`, no clobber of binary `linear_en.pt`),
+  and a `print('classes (id order):', en_labels)` so the per-class P/R is readable. **No
+  seeding** (user said seeding methodology no longer needed). `model.py`/`dataloader.py`
+  imported unchanged. Eval is the released sentence-level majority-vote (`get_text_label`).
+- `LIFE_colab.ipynb`: appended a "Multiclass experiment" section (Steps 0m–4m) before the
+  Notes cell, with its own `*_multi` paths (OUTPUT_MULTI / KEY_SENT_MULTI / BERT_CKPT_MULTI /
+  FEATURES_MULTI / TRAIN_PATH_MULTI / TEST_PATH_MULTI) so the binary run's artifacts aren't
+  touched. Step 0m `--subset all` (~520 articles), 1m `--top_k 10` (binary BERT: fake=HF+MF,
+  true=HR+MR), 2m concat (in-place), 3m LLaMA features → FEATURES_MULTI, 4m train_multi 50ep.
+- Originals confirmed untouched: `model.py`/`dataloader.py` no git diff; `train.py` only its
+  pre-existing 5-line pipeline-fix diff.
+
+**Needs a fresh Colab pass** (Steps 0m–3m must regenerate 4-class LLaMA features — the binary
+`features_llama` has only MF/MR). Sync to Drive: `LIFE_train/train_multi.py` + updated
+`LIFE_colab.ipynb`. **RESULT: <fill in after the Colab run>** (compare vs gpt2 4-class 51.7%).
+
 ## 8b. Paper findings (read 2026-05-29 via locally-installed pypdf → paper_extracted.txt)
 
 LIFE = WWW '26 (Chi Wang et al.). Key facts that contradict our current setup:
