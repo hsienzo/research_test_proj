@@ -300,7 +300,11 @@ Built (verified locally: py_compile OK, notebook valid JSON = 33 cells):
 
 **Needs a fresh Colab pass** (Steps 0m–3m must regenerate 4-class LLaMA features — the binary
 `features_llama` has only MF/MR). Sync to Drive: `LIFE_train/train_multi.py` + updated
-`LIFE_colab.ipynb`. **RESULT: <fill in after the Colab run>** (compare vs gpt2 4-class 51.7%).
+`LIFE_colab.ipynb`. **✅ RESULT (Colab, LLaMA2-7B, released CRF/BMES head, 50ep):
+Acc 57.4 / Macro-F1 45.4.** Up from the old gpt2 4-class 51.7% (§7c), though not directly
+comparable (that predates the current prompt/combined_ll/top-k=10 pipeline). The wide
+Acc↔Macro-F1 gap (57.4 vs 45.4) implies weak minority-class performance — expected with 4
+classes over ~520 articles and the majority class (HR) ≈ 37%.
 
 ## 7g. Combined-by-veracity binary exploration (fake=HF+MF, real=HR+MR) — built, run pending [2026-06-17]
 
@@ -327,6 +331,71 @@ independent of the label. So 4-class and combined both consume `FEATURES_MULTI`.
 
 Sync to Drive: `LIFE_train/train_combined.py` + updated `LIFE_colab.ipynb`.
 **RESULT: <fill in after the Colab run>** (prior combined run: 85.2 / 78.4).
+
+## 7h. GPT-2 as the reconstruction model — binary MF-vs-MR, both heads [2026-06-18]
+
+User asked to swap the **reconstruction (inference) LM** from LLaMA2-7B to **GPT-2** on the
+paper's real task (binary MF-vs-MR) and run BOTH classifier heads, to isolate the effect of the
+reconstruction model. LLaMA baselines to beat/compare:
+- Released CRF/BMES head (`train.py`): ~83.9–85.5 / ~78–80.8 (§7e).
+- Paper BCE head (`train_bce.py`): **86.82 ± 2.157 / 84.48 ± 2.986** (seeds 0–20, §7e).
+
+**No new files needed** (confirmed): `dataset/3_gen_features_local.py` already does GPT-2 via
+`--model gpt2 --scorer bbpe` (BBPE path in `backend_utils.BBPETokenizerPPLCalc` is intact —
+prepends `getPrompt`, handles the sentence list, returns `combined_ll`); `train.py` already IS
+binary MF-vs-MR (released head); `train_bce.py` already IS the binary BCE head. Invoking them
+with a GPT-2 features dir is not editing them, so the "don't touch originals" rule holds. This
+change is **notebook-only** (no `.py` diffs).
+
+**Methodological control:** the GPT-2 run REUSES the existing `OUTPUT_BIN` (key sentences from
+the LLaMA binary run's Step 2). Do NOT re-run Steps 0–2 — re-running Step 1 retrains the BERT
+extractor nondeterministically and would change the key sentences, confounding the model swap.
+Reusing `OUTPUT_BIN` means the ONLY difference vs the LLaMA binary run is the Step-3
+reconstruction LM.
+
+Notebook: added a "GPT-2 reconstruction model (binary MF-vs-MR)" section (before Notes) with
+GPT-2 paths (`FEATURES_GPT2_BIN` / `TRAIN_PATH_GPT2` / `TEST_PATH_GPT2`): Step 3g (GPT-2
+features from `OUTPUT_BIN`), Step 4A-gpt2 (`train.py`, released head), Step 4B-gpt2
+(`train_bce.py`, BCE head, `--seed 0`; sweep seeds 1–20 for mean±std like LLaMA).
+
+Sync to Drive: updated `LIFE_colab.ipynb` only (no `.py` changed).
+**✅ RESULT — BCE head (multi-seed): Acc 78.9 ± 4.82 / Macro-F1 72.52 ± 8.77** (mean ± std;
+raw F1 mean 72.519, std 8.7698). Single seed-0 run was 83.6 / 78.1 — an above-mean draw.
+Well below the LLaMA-2 BCE mean (86.82 ± 2.157 / 84.48 ± 2.986) by ~7.9 / ~12 pts, AND far
+noisier (std ~2× on Acc, ~3× on F1). Strong confirmation that reconstruction-LM quality
+drives the fingerprint: GPT-2 is both weaker and much less stable than LLaMA-2 here.
+**Released CRF/BMES head (GPT-2): still pending.**
+
+## 7i. Qwen2.5-32B reconstruction model (4-bit) — binary MF-vs-MR, both heads [2026-06-18]
+
+Extending the reconstruction-model comparison to a modern, larger LM. Decision context:
+frontier CLOSED models (Claude, GPT-5.x) are unusable for LIFE — the method needs teacher-forced
+per-token log-likelihoods over the INPUT (prompt+article; `calc_sent_ppl` → CrossEntropyLoss over
+logits), and Claude's API exposes no logprobs at all while OpenAI's chat API gives logprobs only
+for generated tokens (echo-mode input scoring is deprecated). So "more modern" = open-weights.
+
+Colab hardware reality: single **40GB A100** max (no 80GB, no multi-GPU). Llama-3-70B ruled out
+(4-bit ≈ 38-40GB weights → no activation headroom on 40GB). Sweet spot = a **4-bit ~32B** model.
+User chose **Qwen/Qwen2.5-32B** (base, not Instruct) — Qwen is GPT-2-style byte BPE so the
+existing `--scorer bbpe` path works; only a quant flag was needed.
+
+Built (verified: py_compile OK, notebook valid JSON):
+- `dataset/3_gen_features_local.py`: added `--load_in_4bit` flag + `_load_model()` helper.
+  4-bit path uses `BitsAndBytesConfig(load_in_4bit, nf4, bnb_4bit_compute_dtype=bfloat16,
+  double_quant)` with `device_map={'':0}` and **skips `model.to(device)`** (bitsandbytes rejects
+  moving a quantized model). Non-4bit path unchanged. `build_calculator` gained a `load_in_4bit`
+  param; `bitsandbytes`/`accelerate` already in requirements.txt (from the original 8-bit design).
+- `LIFE_colab.ipynb`: "Qwen2.5-32B" section (before Notes) with `FEATURES_QWEN_BIN`/`TRAIN_PATH_QWEN`/
+  `TEST_PATH_QWEN`. Step 3q (`--model Qwen/Qwen2.5-32B --scorer bbpe --load_in_4bit`), Step 4A-qwen
+  (released head), Step 4B-qwen (BCE head). Reuses `OUTPUT_BIN` (same key sentences → clean model swap).
+
+Assumption to verify on first run: Qwen's fast tokenizer `_convert_id_to_token` + GPT-2 `byte_decoder`
+mapping works in `BBPETokenizerPPLCalc` (should — Qwen is GPT-2-style byte BPE; would only KeyError if a
+special token appeared mid-text, which plain scoring shouldn't produce). First run downloads ~65GB bf16
+then quantizes to ~18-22GB VRAM.
+
+Sync to Drive: updated `dataset/3_gen_features_local.py` + `LIFE_colab.ipynb`.
+**RESULT — released head: <fill in>. BCE head: <fill in>.** (vs LLaMA / GPT-2 baselines above.)
 
 ## 8b. Paper findings (read 2026-05-29 via locally-installed pypdf → paper_extracted.txt)
 
