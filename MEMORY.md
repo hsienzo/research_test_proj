@@ -1,6 +1,6 @@
 # Project Memory — LIFE on Google Colab
 
-Hand-off summary so a new session can pick up with full context. Last updated: 2026-06-08.
+Hand-off summary so a new session can pick up with full context. Last updated: 2026-07-07.
 
 ---
 
@@ -396,6 +396,48 @@ then quantizes to ~18-22GB VRAM.
 
 Sync to Drive: updated `dataset/3_gen_features_local.py` + `LIFE_colab.ipynb`.
 **RESULT — released head: <fill in>. BCE head: <fill in>.** (vs LLaMA / GPT-2 baselines above.)
+
+## 7j. Human-only reconstruction — binary HF-vs-HR, LLaMA2-7B, both heads [2026-07-07]
+
+User asked to test the method on the **human dataset only**: binary **HF (human_fake) vs HR
+(human_true)** with **LLaMA2-7B** reconstruction, on BOTH classifier heads. This is a
+**negative control** — both classes are human-written, so NEITHER carries the prompt-induced
+LLM fingerprint LIFE keys on (contrast the paper's MF-vs-MR, where fake is LLM-generated).
+Near-chance / weak results are the expected, informative outcome: evidence that LIFE detects
+LLM-*generation*, not fakeness per se.
+
+**Class imbalance matters for reading the result:** HF=97, HR=194 (§4), so 291 articles,
+real:fake ≈ 2:1. A degenerate "always real" classifier already gets ~67% Acc but only ~40
+Macro-F1. So **Macro-F1 and fake recall are the honest metrics** here; accuracy alone can look
+fine just from predicting the majority (real) class.
+
+**Files (only the released head needed a copy):**
+- `LIFE_train/train_human.py` (NEW, copy of `train.py`): only diffs are `en_labels =
+  {human_fake:0, human_true:1}` (8 BMES tags), ckpt names suffixed `_human` (`linear_human_en.pt`
+  etc., no clobber), and a class-order print. No seeding. `model.py`/`dataloader.py` imported
+  unchanged. Released sentence-level majority-vote eval.
+- **BCE head reuses `train_bce.py` UNCHANGED** — its label is suffix-derived
+  (`int(label.endswith('_fake'))`, train_bce.py:54), so HF→fake=1, HR→real=0 automatically. No
+  copy (same way the GPT-2 run reused it).
+- `LIFE_colab.ipynb`: appended a "Human-only (HF-vs-HR)" section (before Notes) with
+  `FEATURES_HUMAN`/`TRAIN_PATH_HUMAN`/`TEST_PATH_HUMAN`. Step 3h **copies just `HF_fake.jsonl` +
+  `HR_true.jsonl` out of `FEATURES_MULTI`** into `FEATURES_HUMAN` (no re-scoring — reuses the
+  4-class LLaMA features; `split_dataset` loads every `.jsonl` in the dir, so it must hold ONLY
+  HF+HR). Step 4A-human (`train_human.py`, released head), Step 4B-human (`train_bce.py`, BCE
+  head, `--seed 0`; sweep 1–20 for mean±std). Requires the 4-class Step 3m to have produced
+  `FEATURES_MULTI`; else run Steps 0m–3m first.
+
+Key insight (reused again): all same-article runs share the malicious-prompt reconstruction LL
+(computed independent of the label), so binary/4-class/combined/human-only all consume the same
+`FEATURES_MULTI` LLaMA features — human-only is just the HF+HR **subset** of them.
+
+Verified locally: `train_human.py` py_compile OK; notebook valid JSON = 59 cells; existing
+cells untouched (pure insertion); no git diff on any existing `.py`.
+
+Sync to Drive: `LIFE_train/train_human.py` + updated `LIFE_colab.ipynb`.
+**RESULT — released head: <fill in>. BCE head: <fill in>.** (Compare against the majority
+baseline ~67 Acc / ~40 Macro-F1; and against MF-vs-MR LLaMA released ~83.9–85.5 / ~78–80.8,
+BCE 86.82 / 84.48.)
 
 ## 8b. Paper findings (read 2026-05-29 via locally-installed pypdf → paper_extracted.txt)
 
